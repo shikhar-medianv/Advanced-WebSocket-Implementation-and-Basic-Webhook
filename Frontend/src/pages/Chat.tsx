@@ -3,10 +3,12 @@ import { io, Socket } from 'socket.io-client';
 import { Send, LogOut, User as UserIcon, MessageSquare, Shield, Users } from 'lucide-react';
 
 interface Message {
+    id?: number;
     sender: string;
     message: string;
     isPrivate?: boolean;
     to?: string;
+    createdAt?: string;
 }
 
 const Chat: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
@@ -40,25 +42,64 @@ const Chat: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
 
         const socket = socketRef.current;
 
-        socket.on('receiveMessage', (data: Message) => {
-            setMessages((prev) => [...prev, { ...data, isPrivate: false }]);
+        socket.on('receiveMessage', (data: any) => {
+            setMessages((prev) => {
+                const newMsg = { ...data, isPrivate: false };
+                if (data.id && prev.some(m => m.id === data.id)) return prev;
+                return [...prev, newMsg];
+            });
         });
 
-        socket.on('receivePrivateMessage', (data: Message) => {
-            setMessages((prev) => [...prev, { ...data, isPrivate: true }]);
+        socket.on('receivePrivateMessage', (data: any) => {
+            setMessages((prev) => {
+                const newMsg = { ...data, isPrivate: true };
+                if (data.id && prev.some(m => m.id === data.id)) return prev;
+                return [...prev, newMsg];
+            });
         });
 
         socket.on('userList', (users: string[]) => {
             setOnlineUsers(users.filter(u => u !== currentUsername));
         });
 
+        socket.on('chatHistory', (data: { type: 'global' | 'private', target?: string, messages: any[] }) => {
+            const formattedHistory: Message[] = data.messages.map(msg => ({
+                id: msg.id,
+                sender: msg.sender,
+                message: msg.message,
+                isPrivate: msg.receiver !== null,
+                to: msg.receiver || undefined,
+                createdAt: msg.createdAt
+            }));
+
+            setMessages((prev) => {
+                const map = new Map();
+                // We use Map to deduplicate messages by their database ID
+                prev.forEach(m => { if (m.id) map.set(m.id, m); else map.set(Math.random(), m); });
+                formattedHistory.forEach(m => { if (m.id) map.set(m.id, m); });
+                // Convert back to array and sort by ID to maintain chronological order
+                return Array.from(map.values()).sort((a, b) => (a.id || 0) - (b.id || 0));
+            });
+        });
+
         return () => {
             socket.off('receiveMessage');
             socket.off('receivePrivateMessage');
             socket.off('userList');
+            socket.off('chatHistory');
             socket.disconnect();
         };
     }, []);
+
+    // Request history when the selected user changes (or on initial load for global chat)
+    useEffect(() => {
+        if (socketRef.current && username) {
+            socketRef.current.emit('requestHistory', {
+                requester: username,
+                targetUser: selectedUser
+            });
+        }
+    }, [selectedUser, username]);
 
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

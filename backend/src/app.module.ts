@@ -8,6 +8,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './users/entities/user.entity';
 
 import { ChatModule } from './chat/chat.module';
+import { Chat } from './chat/entity/chat.entity';
 
 @Module({
   imports: [ConfigModule.forRoot({ isGlobal: true }),
@@ -20,7 +21,7 @@ import { ChatModule } from './chat/chat.module';
       username: configService.get<string>('DB_USERNAME'),
       password: configService.get<string>('DB_PASSWORD'),
       database: configService.get<string>('DB_DATABASE'),
-      entities: [User],
+      entities: [User, Chat],
       synchronize: true, // Warning: use false in production
       logging: true,
     }),
