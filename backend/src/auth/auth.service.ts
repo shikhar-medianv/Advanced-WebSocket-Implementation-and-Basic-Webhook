@@ -15,7 +15,7 @@ export class AuthService {
     private usersService: UsersService,
     private jwtService: JwtService,
     private configService: ConfigService,
-  ) {}
+  ) { }
 
   // Register
   async signUp(username: string, email: string, pass: string): Promise<any> {
@@ -104,5 +104,9 @@ export class AuthService {
     return {
       access_token: await this.jwtService.signAsync(payload),
     };
+  }
+
+  async getAllUsers() {
+    return this.usersService.findAll();
   }
 }
