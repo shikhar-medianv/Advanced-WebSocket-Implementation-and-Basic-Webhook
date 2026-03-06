@@ -1,51 +1,78 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io, Socket } from 'socket.io-client';
-import { Send, LogOut, User as UserIcon, MessageSquare } from 'lucide-react';
-
-const socket: Socket = io('http://localhost:3000');
+import { Send, LogOut, User as UserIcon, MessageSquare, Shield, Users } from 'lucide-react';
 
 interface Message {
     sender: string;
     message: string;
+    isPrivate?: boolean;
+    to?: string;
 }
 
 const Chat: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
     const [username, setUsername] = useState('');
+    const [onlineUsers, setOnlineUsers] = useState<string[]>([]);
+    const [selectedUser, setSelectedUser] = useState<string | null>(null); // null means Global Chat
+    const socketRef = useRef<Socket | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        // Get username from JWT token
         const token = localStorage.getItem('token');
+        let currentUsername = 'User';
+
         if (token) {
             try {
                 const payload = JSON.parse(atob(token.split('.')[1]));
-                setUsername(payload.username || 'Anonymous');
+                currentUsername = payload.username || 'Anonymous';
+                setUsername(currentUsername);
             } catch (e) {
                 console.error('Error decoding token', e);
                 setUsername('User');
             }
         }
 
+        // Initialize socket with token
+        socketRef.current = io('http://localhost:3000', {
+            auth: { token }
+        });
+
+        const socket = socketRef.current;
+
         socket.on('receiveMessage', (data: Message) => {
-            setMessages((prev) => [...prev, data]);
+            setMessages((prev) => [...prev, { ...data, isPrivate: false }]);
+        });
+
+        socket.on('receivePrivateMessage', (data: Message) => {
+            setMessages((prev) => [...prev, { ...data, isPrivate: true }]);
+        });
+
+        socket.on('userList', (users: string[]) => {
+            setOnlineUsers(users.filter(u => u !== currentUsername));
         });
 
         return () => {
             socket.off('receiveMessage');
+            socket.off('receivePrivateMessage');
+            socket.off('userList');
+            socket.disconnect();
         };
     }, []);
 
-    // Auto-scroll to bottom
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
     const sendMessage = () => {
-        if (input.trim()) {
-            const data = { sender: username, message: input };
-            socket.emit('sendMessage', data);
+        if (input.trim() && socketRef.current) {
+            if (selectedUser) {
+                const data = { to: selectedUser, sender: username, message: input };
+                socketRef.current.emit('sendPrivateMessage', data);
+            } else {
+                const data = { sender: username, message: input };
+                socketRef.current.emit('sendMessage', data);
+            }
             setInput('');
         }
     };
@@ -56,44 +83,82 @@ const Chat: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     };
 
     return (
-        <div className="glass-card" style={{ maxWidth: '900px', width: '100%', padding: '2rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                <div style={{ textAlign: 'left' }}>
-                    <h1 style={{ textAlign: 'left', margin: 0, fontSize: '1.75rem' }}>Chat Room</h1>
-                    <p className="subtitle" style={{ textAlign: 'left', marginBottom: 0 }}>
-                        Real-time collaboration
-                    </p>
+        <div className="glass-card chat-container-layout">
+            {/* Sidebar for Online Users */}
+            <div className="chat-sidebar">
+                <div className="sidebar-header">
+                    <Users size={20} />
+                    <span>Online Users</span>
                 </div>
-                <button className="btn-secondary" onClick={handleLogout} style={{ width: 'auto', padding: '0.6rem 1.2rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <LogOut size={18} /> Logout
-                </button>
+                <div className="user-list">
+                    <div
+                        className={`user-item ${selectedUser === null ? 'active' : ''}`}
+                        onClick={() => setSelectedUser(null)}
+                    >
+                        <MessageSquare size={16} />
+                        <span>Global Chat</span>
+                    </div>
+                    {onlineUsers.map((user) => (
+                        <div
+                            key={user}
+                            className={`user-item ${selectedUser === user ? 'active' : ''}`}
+                            onClick={() => setSelectedUser(user)}
+                        >
+                            <UserIcon size={16} />
+                            <span>{user}</span>
+                            <div className="online-indicator"></div>
+                        </div>
+                    ))}
+                    {onlineUsers.length === 0 && (
+                        <p className="no-users">No other users online</p>
+                    )}
+                </div>
             </div>
 
-            <div className="user-badge">
-                <div className="status-dot"></div>
-                <UserIcon size={16} />
-                <span>Logged in as <strong>{username}</strong></span>
-            </div>
+            {/* Main Chat Area */}
+            <div className="chat-main">
+                <div className="chat-header">
+                    <div className="header-info">
+                        <h2>{selectedUser ? `Chat with ${selectedUser}` : 'Global Chat'}</h2>
+                        <p className="subtitle">
+                            {selectedUser ? 'Private Conversation' : 'Message everyone in the room'}
+                        </p>
+                    </div>
+                    <button className="btn-secondary logout-mini" onClick={handleLogout}>
+                        <LogOut size={18} />
+                    </button>
+                </div>
 
-            <div className="chat-window">
+                <div className="user-badge-compact">
+                    <Shield size={14} />
+                    <span>Logged in as <strong>{username}</strong></span>
+                </div>
+
                 <div className="messages-list">
                     {messages.length === 0 ? (
-                        <div style={{ margin: 'auto', textAlign: 'center', color: '#94a3b8' }}>
-                            <MessageSquare size={48} style={{ marginBottom: '1rem', opacity: 0.2 }} />
-                            <p>No messages yet. Why not say hello?</p>
+                        <div className="empty-chat">
+                            <MessageSquare size={48} />
+                            <p>No messages yet. Start the conversation!</p>
                         </div>
                     ) : (
-                        messages.map((msg, index) => (
-                            <div
-                                key={index}
-                                className={`message-bubble ${msg.sender === username ? 'message-sent' : 'message-received'}`}
-                            >
-                                <span className={`message-info ${msg.sender === username ? 'sent-info' : 'received-info'}`}>
-                                    {msg.sender === username ? 'You' : msg.sender}
-                                </span>
-                                {msg.message}
-                            </div>
-                        ))
+                        messages
+                            .filter(msg => {
+                                if (!selectedUser) return !msg.isPrivate; // Global chat shows global messages
+                                // Private chat shows messages between you and selected user
+                                return msg.isPrivate && (msg.sender === selectedUser || msg.to === selectedUser || (msg.sender === username && msg.to === selectedUser));
+                            })
+                            .map((msg, index) => (
+                                <div
+                                    key={index}
+                                    className={`message-bubble ${msg.sender === username ? 'message-sent' : 'message-received'} ${msg.isPrivate ? 'private-bubble' : ''}`}
+                                >
+                                    <span className="message-info">
+                                        {msg.sender === username ? 'You' : msg.sender}
+                                        {msg.isPrivate && <span className="private-tag">Private</span>}
+                                    </span>
+                                    {msg.message}
+                                </div>
+                            ))
                     )}
                     <div ref={messagesEndRef} />
                 </div>
@@ -104,11 +169,11 @@ const Chat: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                        placeholder="Write a message..."
+                        placeholder={selectedUser ? `Message ${selectedUser}...` : "Message everyone..."}
                         className="chat-input"
                     />
                     <button className="btn-primary send-btn" onClick={sendMessage}>
-                        <Send size={18} /> Send
+                        <Send size={18} />
                     </button>
                 </div>
             </div>
